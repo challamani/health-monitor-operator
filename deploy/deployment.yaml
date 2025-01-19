@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-monitor-operator
+  namespace: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: health-monitor-operator
+  template:
+    metadata:
+      labels:
+        app: health-monitor-operator
+    spec:
+      serviceAccountName: health-monitor-operator
+      automountServiceAccountToken: true
+      containers:
+        - name: health-monitor-operator
+          image: docker.io/library/health-monitor-operator:latest
+          imagePullPolicy: Never

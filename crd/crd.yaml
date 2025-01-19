@@ -1,0 +1,47 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: healthchecks.example.com
+spec:
+  group: example.com
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                intervalSeconds:
+                  type: integer
+                expectedStatus:
+                  type: integer
+                auth:
+                  type: object
+                  properties:
+                    mtls:
+                      type: object
+                      properties:
+                        secretName:
+                          type: string
+                    oauth:
+                      type: object
+                      properties:
+                        clientId:
+                          type: string
+                        clientSecret:
+                          type: string
+                        tokenUrl:
+                          type: string
+  scope: Namespaced
+  names:
+    plural: healthchecks
+    singular: healthcheck
+    kind: HealthCheck
+    shortNames:
+    - hc

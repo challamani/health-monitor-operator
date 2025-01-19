@@ -1,0 +1,16 @@
+apiVersion: example.com/v1
+kind: HealthCheck
+metadata:
+  name: example-healthcheck
+  namespace: test
+spec:
+  endpoint: "https://example.com/health"
+  intervalSeconds: 60
+  expectedStatus: 200
+  # auth:
+  #   mtls:
+  #     secretName: "mtls-secret"
+  #   oauth:
+  #     clientId: "example-client-id"
+  #     clientSecret: "example-client-secret"
+  #     tokenUrl: "https://example.com/token"

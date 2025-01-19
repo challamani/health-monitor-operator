@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: health-monitor-operator
+  namespace: test
+secrets:
+- name: health-monitor-operator-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: health-monitor-operator-secret
+  namespace: test
+  annotations:
+    kubernetes.io/service-account.name: health-monitor-operator
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: health-monitor-operator
+  namespace: test
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["example.com"]
+    resources: ["healthchecks"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: health-monitor-operator
+  namespace: test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: health-monitor-operator
+subjects:
+  - kind: ServiceAccount
+    name: health-monitor-operator
+    namespace: test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: health-monitor-operator-role
+rules:
+- apiGroups: ["example.com"]
+  resources: ["healthchecks"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: health-monitor-operator-binding
+subjects:
+- kind: ServiceAccount
+  name: health-monitor-operator
+  namespace: test
+roleRef:
+  kind: ClusterRole
+  name: health-monitor-operator-role
+  apiGroup: rbac.authorization.k8s.io
