@@ -2,6 +2,7 @@ package controller
 
 import (
     "context"
+    "fmt"
     "log"
     "strconv"
 
@@ -43,17 +44,17 @@ type OAuth struct {
 func StartController() error {
     config, err := rest.InClusterConfig()
     if err != nil {
-        return err
+        return fmt.Errorf("failed to get in-cluster config: %v", err)
     }
 
     clientset, err := kubernetes.NewForConfig(config)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to create kubernetes clientset: %v", err)
     }
 
     dynClient, err := dynamic.NewForConfig(config)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to create dynamic client: %v", err)
     }
 
     resource := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "healthchecks"}
@@ -61,9 +62,11 @@ func StartController() error {
     informer := cache.NewSharedIndexInformer(
         &cache.ListWatch{
             ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+                log.Println("Listing healthchecks")
                 return dynClient.Resource(resource).Namespace(corev1.NamespaceAll).List(context.Background(), options)
             },
             WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+                log.Println("Watching healthchecks")
                 return dynClient.Resource(resource).Namespace(corev1.NamespaceAll).Watch(context.Background(), options)
             },
         },
@@ -75,8 +78,22 @@ func StartController() error {
     informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
         AddFunc: func(obj interface{}) {
             u := obj.(*unstructured.Unstructured)
-            spec := parseSpec(u.Object)
+            log.Printf("Healthcheck added: %s/%s", u.GetNamespace(), u.GetName())
+
+            // Log the entire object to understand its structure
+            log.Printf("Unstructured object: %+v", u.Object)
+
+            spec, err := parseSpec(u.Object)
+            if err != nil {
+                log.Printf("Failed to parse spec: %v", err)
+                return
+            }
             createDeployment(clientset, spec, u.GetNamespace(), u.GetName())
+        },
+        DeleteFunc: func(obj interface{}) {
+            u := obj.(*unstructured.Unstructured)
+            log.Printf("Healthcheck deleted: %s/%s", u.GetNamespace(), u.GetName())
+            deleteDeployment(clientset, u.GetNamespace(), u.GetName())
         },
     })
 
@@ -88,29 +105,61 @@ func StartController() error {
     return nil
 }
 
-func parseSpec(obj map[string]interface{}) HealthCheckSpec {
-    // Parse the spec from the unstructured object
-    spec := HealthCheckSpec{}
-    spec.Endpoint = obj["endpoint"].(string)
-    spec.IntervalSeconds = int(obj["intervalSeconds"].(int64))
-    spec.ExpectedStatus = int(obj["expectedStatus"].(int64))
+func parseSpec(obj map[string]interface{}) (HealthCheckSpec, error) {
+    var spec HealthCheckSpec
 
-    if auth, ok := obj["auth"].(map[string]interface{}); ok {
+    // Log the obj to debug the structure
+    log.Printf("Parsing spec from object: %+v", obj)
+
+    specMap, ok := obj["spec"].(map[string]interface{})
+    if !ok {
+        return spec, fmt.Errorf("spec field is missing or not a map")
+    }
+
+    if endpoint, ok := specMap["endpoint"].(string); ok {
+        spec.Endpoint = endpoint
+    } else {
+        return spec, fmt.Errorf("endpoint is missing or not a string")
+    }
+
+    if interval, ok := specMap["intervalSeconds"].(int64); ok {
+        spec.IntervalSeconds = int(interval)
+    } else {
+        return spec, fmt.Errorf("intervalSeconds is missing or not an int64")
+    }
+
+    if expectedStatus, ok := specMap["expectedStatus"].(int64); ok {
+        spec.ExpectedStatus = int(expectedStatus)
+    } else {
+        return spec, fmt.Errorf("expectedStatus is missing or not an int64")
+    }
+
+    if auth, ok := specMap["auth"].(map[string]interface{}); ok {
         if mtls, ok := auth["mtls"].(map[string]interface{}); ok {
-            spec.Auth.MTLS.SecretName = mtls["secretName"].(string)
+            if secretName, ok := mtls["secretName"].(string); ok {
+                spec.Auth.MTLS.SecretName = secretName
+            }
         }
 
         if oauth, ok := auth["oauth"].(map[string]interface{}); ok {
-            spec.Auth.OAuth.ClientID = oauth["clientId"].(string)
-            spec.Auth.OAuth.ClientSecret = oauth["clientSecret"].(string)
-            spec.Auth.OAuth.TokenURL = oauth["tokenUrl"].(string)
+            if clientID, ok := oauth["clientId"].(string); ok {
+                spec.Auth.OAuth.ClientID = clientID
+            }
+            if clientSecret, ok := oauth["clientSecret"].(string); ok {
+                spec.Auth.OAuth.ClientSecret = clientSecret
+            }
+            if tokenURL, ok := oauth["tokenUrl"].(string); ok {
+                spec.Auth.OAuth.TokenURL = tokenURL
+            }
         }
     }
 
-    return spec
+    return spec, nil
 }
 
 func createDeployment(clientset *kubernetes.Clientset, spec HealthCheckSpec, namespace, name string) {
+    log.Printf("Creating deployment for healthcheck: %s/%s", namespace, name)
+    
     deployment := &v1.Deployment{
         ObjectMeta: metav1.ObjectMeta{
             Name:      name,
@@ -133,18 +182,19 @@ func createDeployment(clientset *kubernetes.Clientset, spec HealthCheckSpec, nam
                     Containers: []corev1.Container{
                         {
                             Name:  "healthcheck",
-                            Image: "placeholder-for-your-deployment-image",
+                            Image: "docker.io/library/healthcheck-monitor:latest",
+                            ImagePullPolicy: "Never",
                             Env: []corev1.EnvVar{
                                 {
                                     Name:  "HEALTH_ENDPOINT",
                                     Value: spec.Endpoint,
                                 },
                                 {
-                                    Name:  "INTERVAL_SECONDS",
+                                    Name:  "HEALTH_INTERVAL",
                                     Value: strconv.Itoa(spec.IntervalSeconds),
                                 },
                                 {
-                                    Name:  "EXPECTED_STATUS",
+                                    Name:  "HEALTH_EXPECTEDSTATUS",
                                     Value: strconv.Itoa(spec.ExpectedStatus),
                                 },
                             },
@@ -202,6 +252,18 @@ func createDeployment(clientset *kubernetes.Clientset, spec HealthCheckSpec, nam
     _, err := clientset.AppsV1().Deployments(namespace).Create(context.Background(), deployment, metav1.CreateOptions{})
     if err != nil {
         log.Printf("Error creating deployment: %v", err)
+    } else {
+        log.Printf("Deployment created successfully: %s/%s", namespace, name)
+    }
+}
+
+func deleteDeployment(clientset *kubernetes.Clientset, namespace, name string) {
+    log.Printf("Deleting deployment for healthcheck: %s/%s", namespace, name)
+    err := clientset.AppsV1().Deployments(namespace).Delete(context.Background(), name, metav1.DeleteOptions{})
+    if err != nil {
+        log.Printf("Error deleting deployment: %v", err)
+    } else {
+        log.Printf("Deployment deleted successfully: %s/%s", namespace, name)
     }
 }
 

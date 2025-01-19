@@ -1,12 +1,12 @@
 apiVersion: example.com/v1
 kind: HealthCheck
 metadata:
-  name: example-healthcheck
+  name: httpbin-healthcheck
   namespace: test
 spec:
-  endpoint: "https://example.com/health"
+  endpoint: "https://httpbin.org/status/201"
   intervalSeconds: 60
-  expectedStatus: 200
+  expectedStatus: 201
   # auth:
   #   mtls:
   #     secretName: "mtls-secret"
